@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   deploy-fix:
     # Trigger on any merged PR from a fix/ branch — matches the branch Grafana Assistant creates

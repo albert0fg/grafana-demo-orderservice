@@ -19,12 +19,16 @@ jobs:
       matrix:
         include:
           - service: frontend-api
-            context: services/frontend-api
+            type: microservice
+            dockerfile: services/frontend-api/Dockerfile
           - service: order-service
-            context: services/order-service
+            type: microservice
+            dockerfile: services/order-service/Dockerfile
           - service: inventory-service
-            context: services/inventory-service
+            type: microservice
+            dockerfile: services/inventory-service/Dockerfile
           - service: load-generator
+            type: loadgen
             context: load-generator
 
     steps:
@@ -41,7 +45,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push ${{ matrix.service }}
+      - name: Build and push ${{ matrix.service }} (microservice)
+        if: matrix.type == 'microservice'
+        uses: docker/build-push-action@v6
+        with:
+          context: services
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ghcr.io/albert0fg/grafana-demo-orderservice/${{ matrix.service }}:latest
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Build and push ${{ matrix.service }} (load-generator)
+        if: matrix.type == 'loadgen'
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}

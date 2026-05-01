@@ -28,6 +28,14 @@ spec:
               value: "frontend-api"
             - name: ORDER_SERVICE_URL
               value: "http://order-service:8080"
+            - name: K8S_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: K8S_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
           resources:
             requests:
               cpu: "100m"
