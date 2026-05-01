@@ -48,7 +48,7 @@ setup_telemetry("order-service")
 
 app = FastAPI(title="order-service")
 
-BUG_ENABLED = os.getenv("BUG_ENABLED", "true").lower() == "true"
+BUG_ENABLED = os.getenv("BUG_ENABLED", "false").lower() == "true"
 INVENTORY_URL = os.getenv("INVENTORY_SERVICE_URL", "http://inventory-service:8080")
 
 # Sample order data — each order references 3-5 item IDs
