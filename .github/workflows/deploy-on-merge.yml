@@ -1,0 +1,53 @@
+name: Deploy Fix on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  deploy-fix:
+    # Trigger on any merged PR from a fix/ branch — matches the branch Grafana Assistant creates
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'fix/')
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Patch order-service — disable N+1 bug
+        run: |
+          kubectl patch deployment order-service \
+            -n grafana-demo \
+            --type=strategic \
+            -p='{"spec":{"template":{"spec":{"containers":[{"name":"order-service","env":[{"name":"BUG_ENABLED","value":"false"}]}]}}}}'
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/order-service -n grafana-demo --timeout=120s
+
+      - name: Verify fix is live
+        run: |
+          POD=$(kubectl get pod -n grafana-demo -l app=order-service -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n grafana-demo "$POD" -- env | grep BUG_ENABLED
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ **Fix deployed to production** — `BUG_ENABLED=false` applied to `order-service` in `grafana-demo`. Latency should drop from ~400ms to ~90ms.'
+            })
