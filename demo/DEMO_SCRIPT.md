@@ -107,29 +107,31 @@ Paste **Prompt 3** (from `GRAFANA_ASSISTANT_PROMPTS.md`):
 
 ---
 
-## Act 4 — Grafana Assistant Generates the Fix (4 min)
+## Act 4 — Grafana Assistant Creates the PR via GitHub MCP (4 min)
 
 **[Screen: Grafana Assistant — the magic moment]**
 
 Paste **Prompt 4** (from `GRAFANA_ASSISTANT_PROMPTS.md`):
 
-> *"Based on the investigation: p95 latency ~1.8s, traces showing 8 sequential db.query  
-> spans, and logs confirming a per-item loop in the code. The root cause is an N+1  
-> query bug. The fix is to replace the per-item loop with a single batch query using  
-> db_query_items_batch(). Can you generate a GitHub pull request on  
-> https://github.com/albert0fg/grafana-demo-orderservice that applies this fix  
-> in app/main.py?"*
+> *"Based on the investigation findings, use your GitHub MCP tool to create a pull  
+> request on albert0fg/grafana-demo-orderservice. Create branch fix/n-plus-one-query,  
+> apply the fix in app/main.py (replace the N+1 loop with db_query_items_batch()),  
+> and open the PR with the full incident evidence in the description."*
 
-**What to expect:**
-- Grafana Assistant generates a diff that:
-  - Removes the `for idx, item_id in enumerate(item_ids):` loop
-  - Replaces it with `items = await db_query_items_batch(item_ids)`
-- Creates a GitHub PR with the fix
+**What happens in real time — watch the Assistant work:**
+1. Calls GitHub MCP → `create_branch("fix/n-plus-one-query")`
+2. Calls GitHub MCP → `get_file_contents("app/main.py")` to get the file SHA
+3. Calls GitHub MCP → `create_or_update_file(...)` with the fixed code committed
+4. Calls GitHub MCP → `create_pull_request(...)` with the full evidence-based description
+
+**[Switch screen to GitHub — PR appears live]**  
+https://github.com/albert0fg/grafana-demo-orderservice/pulls
 
 **Talking point:**  
-> "From alert to pull request in under 10 minutes. No manual digging through  
-> dashboards, no war room, no 'have you tried turning it off and on again.'  
-> Grafana Assistant connected all the signals and proposed the exact code change."
+> "This is not a suggestion. Grafana Assistant just created an actual pull request  
+> in your GitHub repo — with the code fix, the trace evidence, and the expected  
+> impact — ready for a human engineer to review and approve.  
+> From alert to PR in under 10 minutes. That's AI-assisted observability."
 
 ---
 

@@ -60,7 +60,7 @@ LogQL hint: {namespace="orderservice"} | json | event="fetch_item"
 
 ---
 
-## Prompt 4 — Root Cause Analysis + PR Generation
+## Prompt 4 — Root Cause Analysis + PR via GitHub MCP
 
 ```
 Based on the full investigation of the orderservice:
@@ -73,24 +73,97 @@ FINDINGS:
 
 ROOT CAUSE: Classic N+1 query problem.
 The code in app/main.py fetches each order item with an individual database query
-inside a for-loop, instead of using a single batch query.
+inside a for-loop, instead of a single batch query.
 
-THE FIX: Replace the per-item loop with a single call to db_query_items_batch(item_ids).
-The function db_query_items_batch() already exists in the codebase and executes
-a single SQL IN-clause query that returns all items at once.
+Please use your GitHub MCP tool to create a pull request with the fix.
+Follow these steps exactly:
 
-In app/main.py, the buggy section is inside the `if BUG_ENABLED:` block:
-- REMOVE: the for-loop that calls db_query_single_item(item_id) for each item
-- REPLACE WITH: items = await db_query_items_batch(item_ids)
+STEP 1 — Create branch:
+  repo owner: albert0fg
+  repo name:  grafana-demo-orderservice
+  new branch: fix/n-plus-one-query
+  from branch: main
 
-Can you create a GitHub pull request on https://github.com/albert0fg/grafana-demo-orderservice
-with this fix? The PR should:
-1. Change the BUG_ENABLED default to False in the code
-2. Replace the N+1 loop with the batch query call
-3. Add a clear PR description explaining the root cause and expected improvement
+STEP 2 — Get the current file to obtain its SHA:
+  path: app/main.py
+
+STEP 3 — Update the file on the new branch with these two changes:
+
+  CHANGE A — Fix the default value on line 16:
+    FROM: BUG_ENABLED = os.getenv("BUG_ENABLED", "true").lower() == "true"
+    TO:   BUG_ENABLED = os.getenv("BUG_ENABLED", "false").lower() == "true"
+
+  CHANGE B — Replace the entire if/else block inside get_order() (lines 138–166):
+    REMOVE this block:
+        if BUG_ENABLED:
+            # BUG: N+1 query problem — one DB call per item
+            logger.info(json.dumps({
+                "event": "fetch_order_start",
+                "order_id": order_id,
+                "item_count": len(item_ids),
+                "query_mode": "n+1",
+                "msg": f"Fetching order {order_id} — will execute {len(item_ids)} individual DB queries"
+            }))
+            for idx, item_id in enumerate(item_ids):
+                logger.info(json.dumps({
+                    "event": "fetch_item",
+                    "order_id": order_id,
+                    "item_id": item_id,
+                    "progress": f"{idx + 1}/{len(item_ids)}",
+                    "msg": f"Fetching item {idx + 1} of {len(item_ids)}: item_id={item_id}"
+                }))
+                item = await db_query_single_item(item_id)
+                items.append(item)
+        else:
+            # FIX: single batch query
+            logger.info(json.dumps({
+                "event": "fetch_order_start",
+                "order_id": order_id,
+                "item_count": len(item_ids),
+                "query_mode": "batch",
+                "msg": f"Fetching order {order_id} — executing 1 batch DB query for {len(item_ids)} items"
+            }))
+            items = await db_query_items_batch(item_ids)
+
+    REPLACE WITH:
+        logger.info(json.dumps({
+            "event": "fetch_order_start",
+            "order_id": order_id,
+            "item_count": len(item_ids),
+            "query_mode": "batch",
+            "msg": f"Fetching order {order_id} — executing 1 batch DB query for {len(item_ids)} items"
+        }))
+        items = await db_query_items_batch(item_ids)
+
+  Commit message: "fix: replace N+1 item queries with single batch query"
+
+STEP 4 — Create pull request:
+  title: "fix(orderservice): replace N+1 queries with batch query — 8x latency improvement"
+  base branch: main
+  head branch: fix/n-plus-one-query
+  body:
+    ## Root Cause
+    Grafana Assistant identified an N+1 query problem via distributed tracing.
+    Each GET /orders/{id} request executed **8 individual SELECT queries** (one per item),
+    causing p95 latency of ~1.8s against a 200ms SLA.
+
+    ## Evidence from Grafana Cloud
+    - **Prometheus**: `orderservice_request_duration_seconds` p95 = 1.8s
+    - **Tempo**: 8 sequential `db.query` spans per trace, each ~200ms
+    - **Loki**: logs confirming loop pattern — "Fetching item 1 of 8", "Fetching item 2 of 8"...
+
+    ## Fix
+    Replaced the per-item for-loop with a single `db_query_items_batch()` call
+    that executes one `SELECT ... WHERE id IN (...)` query for all items at once.
+
+    ## Expected Impact
+    - p95 latency: 1.8s → ~250ms (8x improvement)
+    - DB queries per request: 8 → 1
+    - `orderservice_db_queries_total{query_type="single"}` drops to 0
 ```
 
-**Expected outcome**: Grafana Assistant creates a PR with the code fix.
+**Expected outcome**: Grafana Assistant uses the GitHub MCP to create branch → commit → PR live.  
+**PR URL**: https://github.com/albert0fg/grafana-demo-orderservice/pulls
 
 ---
 
