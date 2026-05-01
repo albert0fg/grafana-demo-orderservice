@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: grafana-demo
+  labels:
+    app: load-generator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+        service.name: load-generator
+    spec:
+      containers:
+        - name: load-generator
+          image: ghcr.io/albert0fg/grafana-demo-orderservice/load-generator:latest
+          env:
+            - name: FRONTEND_URL
+              value: "http://frontend-api:8080"
+            - name: TARGET_RPS
+              value: "3"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"

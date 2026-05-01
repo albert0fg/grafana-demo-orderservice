@@ -1,200 +1,43 @@
-# Demo Script: From Alert to PR with Grafana Cloud + Grafana Assistant
+# Demo Script — Grafana Cloud N+1 Bug
 
-**Duration**: ~15 minutes  
-**Audience**: Engineering leaders, developers, platform engineers  
-**Grafana Cloud URL**: https://albertito.grafana.net
+**Duration:** ~20 min | **Audience:** Technical / DevOps
 
 ---
 
-## The Story
+## Act 1 — Deploy the demo (2 min)
 
-> "A new spike in customer complaints: checkout pages are slow. The engineering team 
-> gets an alert. Instead of hours of manual digging, they open Grafana Cloud and let 
-> Grafana Assistant guide the entire investigation — from first symptom to merged PR."
-
----
-
-## Pre-Demo Setup (10 min before the demo)
-
-```bash
-# 1. Clone and deploy (with bug enabled)
-git clone https://github.com/albert0fg/grafana-demo-orderservice
-cd grafana-demo-orderservice
-./deploy.sh
-
-# 2. Wait ~5 minutes for metrics/traces to accumulate in Grafana Cloud
-kubectl logs -n orderservice -l app=load-generator -f
-# You should see: "GET /orders/1 -> 200 (1.823s)" — that's the bug in action
-
-# 3. Open Grafana Cloud in browser: https://albertito.grafana.net
-# 4. Optional: Pre-open the Explore tab with Grafana Assistant visible
-```
+- Run `./deploy.sh` to apply all manifests to the `grafana-demo` namespace.
+- Verify all 4 pods are Running: `kubectl get pods -n grafana-demo`.
+- The load generator immediately starts hitting `frontend-api` at 3 RPS with `BUG_ENABLED=true`.
 
 ---
 
-## Act 1 — "Something is wrong" (2 min)
+## Act 2 — Observe the symptom (4 min)
 
-**[Screen: Grafana Cloud home page]**
-
-> "Our SRE team just received an alert. The orderservice latency is way above threshold.  
-> Let's open Grafana Cloud and start the investigation."
-
-1. Navigate to **Explore → Grafana Assistant** (or the AI panel)
-2. Show the **Kubernetes Monitoring** dashboard — point to:
-   - High CPU/memory on orderservice pods
-   - The pod is healthy but slow
-
-**Talking point:**  
-> "Everything looks green from a health perspective — pods are running, no crashes.  
-> But customers are waiting 2 seconds for an order page that should load in 200ms."
+- Open Grafana Cloud → Application Observability (or Explore → Tempo).
+- Use **Prompt 1** in Grafana Assistant: ask for p95 latency on `frontend-api`.
+- Show the latency is elevated — each checkout triggers multiple serial HTTP calls.
 
 ---
 
-## Act 2 — Grafana Assistant Investigates Metrics (3 min)
+## Act 3 — Root-cause with traces (6 min)
 
-**[Screen: Grafana Assistant chat panel]**
-
-Paste **Prompt 1** (from `GRAFANA_ASSISTANT_PROMPTS.md`):
-
-> *"The orderservice in Kubernetes is showing high latency. Customers report checkout 
-> is taking more than 2 seconds. Can you investigate using Prometheus metrics?  
-> Show me the p95 latency and error rate for orderservice over the last 30 minutes."*
-
-**What to expect from Grafana Assistant:**
-- Runs PromQL: `histogram_quantile(0.95, rate(orderservice_request_duration_seconds_bucket[5m]))`
-- Shows p95 ~1.8s vs expected <200ms
-- Points out the `/orders` endpoint is the offender
-
-**Talking point:**  
-> "In seconds, Grafana Assistant wrote the PromQL, ran it, and confirmed exactly which  
-> endpoint is slow. I didn't have to remember the metric names or query syntax."
+- Use **Prompt 2** to pull up the service map: frontend-api → order-service → inventory-service.
+- Use **Prompt 3** to find traces where order-service fans out into 3-5 sequential calls to inventory-service.
+- Drill into one trace: show the waterfall — each `GET /items/{id}` waits for the previous one.
 
 ---
 
-## Act 3 — Tracing the Root Cause (4 min)
+## Act 4 — Fix via GitHub MCP (4 min)
 
-**[Screen: Grafana Assistant → switches to Tempo]**
-
-Paste **Prompt 2** (from `GRAFANA_ASSISTANT_PROMPTS.md`):
-
-> *"The p95 latency on /orders/{order_id} is ~1.8s. Can you look at the distributed 
-> traces in Tempo for the orderservice and find the slowest recent traces?  
-> I want to see what operations are happening inside each request."*
-
-**What to expect:**
-- Assistant queries Tempo for traces from `orderservice` with high duration
-- Shows the trace waterfall: 1 parent span + **8 sequential `db.query` child spans**
-- Each DB span is ~200ms → 8 × 200ms = 1.6s total
-
-**[Dramatic moment — show the trace waterfall visually]**
-
-> "Look at this. Every single order request is making **8 separate database calls**,  
-> one after the other. This is the classic N+1 query problem."
-
-Paste **Prompt 3** (from `GRAFANA_ASSISTANT_PROMPTS.md`):
-
-> *"In the traces I can see 8 sequential db.query spans. Can you check the Loki logs  
-> for the orderservice to confirm the pattern? Look for logs with event=fetch_item  
-> in the last 15 minutes."*
-
-**What to expect:**
-- Logs show: `"Fetching item 1 of 8"`, `"Fetching item 2 of 8"` ... `"Fetching item 8 of 8"`
-- Clear confirmation: the code loops over items one-by-one
-
-**Talking point:**  
-> "Metrics told us WHERE. Traces told us WHAT. Logs told us HOW.  
-> All three signals point to the same root cause — and it took under 5 minutes."
+- Use **Prompt 4**: ask Grafana Assistant to create a PR via GitHub MCP.
+- Show the PR created in `albert0fg/grafana-demo-orderservice` with the `BUG_ENABLED=false` change.
+- Apply the fix live: `./deploy.sh --fix` — watch the rollout complete in seconds.
 
 ---
 
-## Act 4 — Grafana Assistant Creates the PR via GitHub MCP (4 min)
+## Act 5 — Confirm the improvement (4 min)
 
-**[Screen: Grafana Assistant — the magic moment]**
-
-Paste **Prompt 4** (from `GRAFANA_ASSISTANT_PROMPTS.md`):
-
-> *"Based on the investigation findings, use your GitHub MCP tool to create a pull  
-> request on albert0fg/grafana-demo-orderservice. Create branch fix/n-plus-one-query,  
-> apply the fix in app/main.py (replace the N+1 loop with db_query_items_batch()),  
-> and open the PR with the full incident evidence in the description."*
-
-**What happens in real time — watch the Assistant work:**
-1. Calls GitHub MCP → `create_branch("fix/n-plus-one-query")`
-2. Calls GitHub MCP → `get_file_contents("app/main.py")` to get the file SHA
-3. Calls GitHub MCP → `create_or_update_file(...)` with the fixed code committed
-4. Calls GitHub MCP → `create_pull_request(...)` with the full evidence-based description
-
-**[Switch screen to GitHub — PR appears live]**  
-https://github.com/albert0fg/grafana-demo-orderservice/pulls
-
-**Talking point:**  
-> "This is not a suggestion. Grafana Assistant just created an actual pull request  
-> in your GitHub repo — with the code fix, the trace evidence, and the expected  
-> impact — ready for a human engineer to review and approve.  
-> From alert to PR in under 10 minutes. That's AI-assisted observability."
-
----
-
-## Act 5 — Validate the Fix (2 min)
-
-**[Screen: Terminal + Grafana Cloud]**
-
-```bash
-# Apply the fix to the cluster (simulates PR merge + deploy)
-./deploy.sh --fix
-```
-
-Wait 2-3 minutes, then go back to Grafana Assistant:
-
-Paste **Prompt 5** (from `GRAFANA_ASSISTANT_PROMPTS.md`):
-
-> *"We just deployed the fix (BUG_ENABLED=false). Can you check the current p95 latency  
-> on orderservice and compare it to the previous 30 minutes?"*
-
-**What to expect:**
-- Latency drops from ~1.8s → ~0.25s  
-- Error rate back to 0%
-- DB queries: from `db_queries_total{query_type="single"}` to `{query_type="batch"}`
-
-**Talking point:**  
-> "This is the full loop: detect, investigate, fix, validate — all inside Grafana Cloud.  
-> The developer never left the tool."
-
----
-
-## Closing (1 min)
-
-> "What you just saw is what we call **AI-assisted observability**. Grafana Assistant  
-> doesn't replace your engineers — it makes them 10x faster. It knows your services,  
-> your traces, your logs, and now it can suggest code fixes and open PRs.  
-> This isn't the future. This is Grafana Cloud today."
-
----
-
-## Teardown
-
-```bash
-./deploy.sh --teardown
-```
-
----
-
-## Backup: If Grafana Assistant is unavailable
-
-Run manual queries in Explore:
-
-```promql
-# p95 latency
-histogram_quantile(0.95, sum(rate(orderservice_request_duration_seconds_bucket[5m])) by (le, endpoint))
-
-# Error rate
-sum(rate(orderservice_requests_total{status_code=~"5.."}[5m])) by (endpoint)
-
-# DB query count per type
-sum(rate(orderservice_db_queries_total[5m])) by (query_type)
-```
-
-```logql
-# Show N+1 log pattern
-{namespace="orderservice"} | json | event="fetch_item"
-```
+- Use **Prompt 5**: compare p95 latency before and after the fix timestamp.
+- Show the graph drop: from N×RTT to 1×RTT per request.
+- Teardown when done: `./deploy.sh --teardown`.
