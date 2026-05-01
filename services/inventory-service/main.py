@@ -1,5 +1,7 @@
+import asyncio
 import os
 import logging
+import random
 
 from fastapi import FastAPI
 
@@ -64,13 +66,16 @@ async def health():
 
 @app.get("/items/batch")
 async def get_items_batch(ids: str):
-    """Return multiple items in a single call. ids is a comma-separated list of item IDs."""
-    logger.info("batch request ids=%s", ids)
-    return [ITEMS.get(i, {"error": "not found"}) for i in ids.split(",")]
+    """Single DB-style query for multiple items — one round-trip regardless of count."""
+    item_list = ids.split(",")
+    await asyncio.sleep(0.08 + random.uniform(0, 0.02))   # ~80-100ms (1 DB query)
+    logger.info("batch request ids=%s count=%d", ids, len(item_list))
+    return [ITEMS.get(i, {"error": "not found"}) for i in item_list]
 
 
 @app.get("/items/{item_id}")
 async def get_item(item_id: str):
-    """Return a single item by ID."""
+    """Single-row DB query — ~80ms each, called N times in the buggy path."""
+    await asyncio.sleep(0.08 + random.uniform(0, 0.02))   # ~80-100ms per item
     logger.info("single item request item_id=%s", item_id)
     return ITEMS.get(item_id, {"error": "not found"})
