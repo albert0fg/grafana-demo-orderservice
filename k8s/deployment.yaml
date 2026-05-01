@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orderservice
+  namespace: orderservice
+  labels:
+    app: orderservice
+    version: "1.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: orderservice
+  template:
+    metadata:
+      labels:
+        app: orderservice
+        version: "1.0.0"
+      annotations:
+        # Prometheus scraping
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: orderservice
+          image: ghcr.io/albert0fg/grafana-demo-orderservice:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: BUG_ENABLED
+              value: "true"   # <-- Toggle to "false" to deploy the fix
+            - name: OTEL_SERVICE_NAME
+              value: "orderservice"
+            - name: SERVICE_VERSION
+              value: "1.0.0"
+            - name: DEPLOYMENT_ENV
+              value: "production"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://grafana-k8s-monitoring-alloy-receiver.monitoring.svc.cluster.local:4317"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.namespace.name=orderservice,k8s.deployment.name=orderservice"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: orderservice
+  labels:
+    app: load-generator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      containers:
+        - name: load-generator
+          image: ghcr.io/albert0fg/grafana-demo-orderservice:load-generator
+          imagePullPolicy: Always
+          env:
+            - name: TARGET_URL
+              value: "http://orderservice.orderservice.svc.cluster.local:8080"
+            - name: REQUESTS_PER_SECOND
+              value: "5"
+            - name: CONCURRENCY
+              value: "3"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
