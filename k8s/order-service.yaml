@@ -29,7 +29,7 @@ spec:
             - name: INVENTORY_SERVICE_URL
               value: "http://inventory-service:8080"
             - name: BUG_ENABLED
-              value: "true"  # set to false to deploy fix
+              value: "false"  # N+1 bug disabled; set to "true" to re-enable for demo
           resources:
             requests:
               cpu: "100m"
