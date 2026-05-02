@@ -2,6 +2,16 @@
 
 **Duration:** ~15 min | **Audience:** Technical / DevOps / SRE
 
+## Quick-access URLs (open these before starting)
+
+| What | URL |
+|------|-----|
+| Firing alert | https://albertito.grafana.net/alerting/grafana/dfku265tgj11ca/view |
+| Demo dashboard | https://albertito.grafana.net/d/order-service-n-plus-one-demo |
+| App Observability | https://albertito.grafana.net/a/grafana-app-observability-app/services |
+| Grafana Assistant | Open from the sparkle icon (top-right of any Grafana page) |
+| GitHub PR (after Prompt 4) | https://github.com/albert0fg/grafana-demo-orderservice/pulls |
+
 ---
 
 ## Before You Start
@@ -10,70 +20,68 @@
 ./demo-check.sh
 ```
 
-All 4 checks must pass (pods running, bug enabled, order-6 >800ms, alert Firing).
-If the alert is not yet Firing, wait 1–2 minutes — the load generator sends 50%
-of traffic to order-6 (10 items, ~1s) so it fires quickly.
+All 4 checks must pass (pods running, bug enabled via /health, order-6 >800ms, alert Firing).
+If the alert is Pending, wait 1–2 minutes — it fires quickly once latency crosses 300ms.
 
 ---
 
 ## Act 1 — The Alert (2 min)
 
-- Open Grafana Cloud → Alerting. Show the **"frontend-api checkout latency alta"**
-  alert in **Firing** state.
-- Mention: *"This alert fired on its own — p99 checkout latency crossed 300ms.
+- Open the **firing alert URL** above. Show the
+  **"frontend-api checkout latency alta"** alert in **Firing** state.
+- *"This alert fired on its own — p99 checkout latency crossed 300ms.
   Let's hand this to Grafana Assistant."*
-- Open Grafana Assistant.
+- Open Grafana Assistant (sparkle icon, top-right).
 
 ---
 
 ## Act 2 — Root cause with Assistant (8 min)
 
-Use the prompts in `GRAFANA_ASSISTANT_PROMPTS.md` in order:
+Use the prompts in `GRAFANA_ASSISTANT_PROMPTS.md` in order.
 
-**Prompt 1** — Point Assistant at the firing alert. It queries Prometheus span
-metrics and confirms `frontend-api` p99 is ~1s.
+**Prompt 1** — Assistant reads the firing alert, queries
+`traces_spanmetrics_latency_bucket` for `frontend-api`, and confirms p99 ~1s.
 
-**Prompt 2** — Service map. Assistant identifies the call chain
-`frontend-api → order-service → inventory-service` and notes that
-`inventory-service` has disproportionately high span count.
+**Prompt 2** — Assistant opens the App Observability service map, identifies
+`frontend-api → order-service → inventory-service`, and flags that
+`inventory-service` has ~10× more spans than traffic volume — the N+1 signature.
 
-**Prompt 3** — Traces. Assistant finds requests where `order-service` fans out
-into 10 sequential `GET /items/{id}` calls. Show the waterfall — each call waits
-for the previous one. Point out that `inventory-service` has a `/items/batch`
-endpoint that does this in a single round-trip.
+**Prompt 3** — Assistant queries Tempo, surfaces order-6 (10 items, ~1s) and
+shows the sequential waterfall: each `GET /items/{id}` blocks the next.
 
 ---
 
 ## Act 3 — Fix via GitHub MCP (3 min)
 
-**Prompt 4** — Ask Grafana Assistant to open a PR via GitHub MCP.
+**Prompt 4** — Assistant creates a PR via GitHub MCP.
 
-- It creates a branch `fix/order-service-n-plus-one` and opens a PR against
-  `albert0fg/grafana-demo-orderservice` setting `BUG_ENABLED=false` in
-  `k8s/order-service.yaml`.
-- Show the PR in GitHub.
-- Merge it live — the `deploy-on-merge.yml` workflow triggers automatically
-  (~30s) and kubectl-patches `order-service` with `BUG_ENABLED=false` and
-  `SERVICE_VERSION=<sha>-fix`.
+- Branch `fix/order-service-n-plus-one`, changes `BUG_ENABLED` to `"false"`
+  in `k8s/order-service.yaml` only.
+- Open the **GitHub PRs URL** above and show the open PR.
+- **While waiting for approval:** explain the deployment pipeline — the
+  `deploy-on-merge.yml` workflow will kubectl-patch the running pod in ~30s,
+  no image rebuild needed.
+- **Merge the PR** — workflow triggers automatically. The PR comment confirms
+  deploy when done (`SERVICE_VERSION=<sha>-fix` stamped).
 
 ---
 
 ## Act 4 — Confirm the improvement (2 min)
 
-**Prompt 5** — Compare latency before and after. Assistant queries span metrics
-and shows the drop:
+**Prompt 5** — Assistant queries span metrics grouped by `service_version`:
 
-- **Before** (`service.version=e856bee`): p99 ~1000ms
-- **After** (`service.version=e856bee-fix`): p99 ~100ms
+- `<sha>` (buggy): p99 ~950ms
+- `<sha>-fix` (fixed): p99 ~90ms
 
-10x improvement. The service map also collapses — `inventory-service` span count
-drops from N per order to 1.
+Open the **demo dashboard** URL above — the `Fix deployed` annotation marks
+the exact moment of the drop. The N+1 panel also shows inventory-service spans
+collapsing from ~30/s to ~3/s.
 
 ---
 
 ## Reset for Next Run
 
 ```bash
-./deploy.sh --reset   # re-enables bug, ~5 seconds
+./deploy.sh --reset   # re-enables bug + posts "Demo reset" annotation (~5s)
 ./demo-check.sh       # verify ready
 ```

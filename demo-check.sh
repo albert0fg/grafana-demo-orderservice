@@ -135,7 +135,32 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[0;32m  ✓ Ready to demo! (%d checks passed)\033[0m\n' "$PASS"
+  echo ""
+  echo "  Quick-access URLs:"
+  echo "  Alert:     https://albertito.grafana.net/alerting/grafana/dfku265tgj11ca/view"
+  echo "  Dashboard: https://albertito.grafana.net/d/order-service-n-plus-one-demo"
+  echo "  App O11y:  https://albertito.grafana.net/a/grafana-app-observability-app/services"
+  echo ""
   echo "  Start with: \"Hay una alerta crítica disparada, investiga qué está pasando\""
+  echo ""
+  # Mark demo start on the dashboard timeline
+  if command -v gcx &>/dev/null; then
+    f=$(mktemp /tmp/gcx-anno-XXXXXX.yaml)
+    cat > "$f" <<YAML
+apiVersion: annotations.grafana.app/v1
+kind: Annotation
+metadata:
+  name: "demo-start-$(date +%s)"
+spec:
+  dashboardUID: order-service-n-plus-one-demo
+  tags: [demo, start]
+  text: "Demo started"
+  time: $(date +%s)000
+YAML
+    gcx annotations create -f "$f" 2>/dev/null && \
+      printf '\033[0;32m  ✓ "Demo started" annotation posted to dashboard\033[0m\n' || true
+    rm -f "$f"
+  fi
 else
   printf '\033[0;31m  ✗ Not ready — %d check(s) failed, %d passed\033[0m\n' "$FAIL" "$PASS"
   echo "  Fix the issues above before starting the demo."
