@@ -39,13 +39,13 @@ Busca trazas de order-service donde haya más de 5 llamadas a inventory-service 
 
 ## Prompt 4
 
-Usa el MCP de GitHub para crear un PR en albert0fg/grafana-demo-orderservice que corrija el bug N+1 en order-service.
+Usa el MCP de GitHub para crear un PR en albert0fg/grafana-demo-orderservice que corrija el bug N+1 en order-service. El fix debe ser únicamente cambiar el valor de BUG_ENABLED a "false" en el fichero k8s/order-service.yaml. No toques el código Python.
 
 > **What happens:** Assistant uses GitHub MCP to create branch
-> `fix/order-service-n-plus-one`, commits `k8s/order-service.yaml` with
-> `BUG_ENABLED=false`, and opens a PR with a description linking the traces to
-> the fix. **Merge the PR** — `deploy-on-merge.yml` auto-deploys in ~30s and
-> stamps `SERVICE_VERSION=<sha>-fix`.
+> `fix/order-service-n-plus-one`, commits **only** `k8s/order-service.yaml`
+> changing `BUG_ENABLED` from `"true"` to `"false"`, and opens a PR linking
+> the traces to the fix. **Merge the PR** — `deploy-on-merge.yml` auto-deploys
+> in ~30s and stamps `SERVICE_VERSION=<sha>-fix`.
 
 ---
 
