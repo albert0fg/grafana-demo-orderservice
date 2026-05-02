@@ -25,12 +25,13 @@ case "${1:-}" in
 
   --reset)
     echo "Resetting demo: re-enabling N+1 bug (BUG_ENABLED=true)..."
+    SHORT_SHA="$(git -C "$(dirname "$0")" rev-parse --short HEAD)"
     kubectl patch deployment order-service \
       -n "$NAMESPACE" \
       --type=strategic \
-      -p='{"spec":{"template":{"spec":{"containers":[{"name":"order-service","env":[{"name":"BUG_ENABLED","value":"true"}]}]}}}}'
+      -p="{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"order-service\",\"env\":[{\"name\":\"BUG_ENABLED\",\"value\":\"true\"},{\"name\":\"SERVICE_VERSION\",\"value\":\"${SHORT_SHA}\"}]}]}}}}"
     kubectl rollout status deployment/order-service -n "$NAMESPACE"
-    echo "Done. N+1 bug is ENABLED again — ready for next demo run."
+    echo "Done. BUG_ENABLED=true, SERVICE_VERSION=${SHORT_SHA} — ready for next demo run."
     ;;
 
   --teardown)
