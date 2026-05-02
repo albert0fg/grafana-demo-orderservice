@@ -64,6 +64,25 @@ jobs:
           POD=$(kubectl get pod -n grafana-demo -l app=order-service -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n grafana-demo "$POD" -- env | grep -E "BUG_ENABLED|SERVICE_VERSION"
 
+      - name: Post Grafana annotation — fix deployed
+        if: steps.guard.outputs.should_deploy == 'true'
+        continue-on-error: true
+        env:
+          GRAFANA_SA_TOKEN: ${{ secrets.GRAFANA_SA_TOKEN }}
+        run: |
+          if [ -z "${GRAFANA_SA_TOKEN:-}" ]; then
+            echo "GRAFANA_SA_TOKEN secret not set — skipping annotation"
+            exit 0
+          fi
+          SHORT_SHA="${GITHUB_SHA::7}"
+          NOW_MS="$(date +%s)000"
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GRAFANA_SA_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"dashboardUID\":\"order-service-n-plus-one-demo\",\"tags\":[\"demo\",\"fix\"],\"text\":\"Fix deployed — BUG_ENABLED=false, service.version=${SHORT_SHA}-fix\",\"time\":${NOW_MS}}" \
+            "https://albertito.grafana.net/api/annotations" \
+            && echo "Grafana annotation posted." || echo "Annotation failed (non-fatal)"
+
       - name: Comment on PR
         if: steps.guard.outputs.should_deploy == 'true'
         uses: actions/github-script@v7

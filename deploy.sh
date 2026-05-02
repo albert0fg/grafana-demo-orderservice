@@ -4,12 +4,36 @@
 # Usage:
 #   ./deploy.sh             Deploy everything with BUG_ENABLED=true
 #   ./deploy.sh --fix       Patch order-service to BUG_ENABLED=false (deploy the fix)
+#   ./deploy.sh --reset     Re-enable N+1 bug for next demo run
 #   ./deploy.sh --teardown  Delete the grafana-demo namespace
 
 set -euo pipefail
 
 NAMESPACE="grafana-demo"
 K8S_DIR="$(cd "$(dirname "$0")/k8s" && pwd)"
+GRAFANA_DIR="$(cd "$(dirname "$0")/grafana" && pwd)"
+DASHBOARD_UID="order-service-n-plus-one-demo"
+
+# Post a Grafana annotation to the demo dashboard (requires gcx; silent on failure)
+post_annotation() {
+  local text="$1" tags="$2"
+  command -v gcx &>/dev/null || return 0
+  local f
+  f=$(mktemp /tmp/gcx-anno-XXXXXX.yaml)
+  cat > "$f" <<YAML
+apiVersion: annotations.grafana.app/v1
+kind: Annotation
+metadata:
+  name: "demo-$(date +%s)"
+spec:
+  dashboardUID: ${DASHBOARD_UID}
+  tags: [${tags}]
+  text: "${text}"
+  time: $(date +%s)000
+YAML
+  gcx annotations create -f "$f" 2>/dev/null && echo "Grafana annotation posted." || true
+  rm -f "$f"
+}
 
 case "${1:-}" in
   --fix)
@@ -21,6 +45,7 @@ case "${1:-}" in
     echo "Done. Waiting for rollout..."
     kubectl rollout status deployment/order-service -n "$NAMESPACE"
     echo "N+1 bug is now FIXED."
+    post_annotation "Fix deployed manually — BUG_ENABLED=false" "demo, fix"
     ;;
 
   --reset)
@@ -32,6 +57,7 @@ case "${1:-}" in
       -p="{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"order-service\",\"env\":[{\"name\":\"BUG_ENABLED\",\"value\":\"true\"},{\"name\":\"SERVICE_VERSION\",\"value\":\"${SHORT_SHA}\"}]}]}}}}"
     kubectl rollout status deployment/order-service -n "$NAMESPACE"
     echo "Done. BUG_ENABLED=true, SERVICE_VERSION=${SHORT_SHA} — ready for next demo run."
+    post_annotation "Demo reset — BUG_ENABLED=true, version=${SHORT_SHA}" "demo, reset"
     ;;
 
   --teardown)
@@ -56,7 +82,6 @@ case "${1:-}" in
 
     echo ""
     echo "Provisioning Grafana dashboard..."
-    GRAFANA_DIR="$(cd "$(dirname "$0")/grafana" && pwd)"
     if command -v gcx &>/dev/null; then
       gcx dashboards create -f "$GRAFANA_DIR/dashboard-order-service.json" \
         --folder-name "Order Service Demo" --upsert 2>/dev/null && \
@@ -73,7 +98,7 @@ case "${1:-}" in
 
   *)
     echo "Unknown argument: ${1}"
-    echo "Usage: $0 [--fix|--teardown]"
+    echo "Usage: $0 [--fix|--reset|--teardown]"
     exit 1
     ;;
 esac

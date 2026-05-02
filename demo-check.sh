@@ -34,7 +34,7 @@ else
   PASS=$((PASS+1))
 fi
 
-# ── 2. BUG_ENABLED=true ──────────────────────────────
+# ── 2. BUG_ENABLED=true (env + health API) ──────────
 printf "2. N+1 bug enabled... "
 BUG=$(kubectl exec -n "$NAMESPACE" deploy/order-service -- \
   env 2>/dev/null | grep BUG_ENABLED | cut -d= -f2 || echo "unknown")
@@ -42,10 +42,25 @@ if [ "$BUG" != "true" ]; then
   red "FAIL — BUG_ENABLED=$BUG (run './deploy.sh --reset' to re-enable)"
   FAIL=$((FAIL+1))
 else
-  SVC_VER=$(kubectl exec -n "$NAMESPACE" deploy/order-service -- \
-    env 2>/dev/null | grep SERVICE_VERSION | cut -d= -f2 || echo "unknown")
-  green "BUG_ENABLED=true  (service.version=$SVC_VER)"
-  PASS=$((PASS+1))
+  # Verify the running image actually reads BUG_ENABLED via /health
+  # (catches cases where the image was rebuilt without BUG_ENABLED code)
+  HEALTH_BUG=$(kubectl exec -n "$NAMESPACE" deploy/order-service -- \
+    python3 -c "
+import urllib.request, json
+r = urllib.request.urlopen('http://localhost:8080/health')
+d = json.loads(r.read())
+print(str(d.get('bug_enabled', 'missing')).lower())
+" 2>/dev/null || echo "error")
+  if [ "$HEALTH_BUG" != "true" ]; then
+    red "FAIL — env BUG_ENABLED=true but /health returns bug_enabled=$HEALTH_BUG"
+    red "       Image may lack BUG_ENABLED code — wait for GHA build and run './deploy.sh'"
+    FAIL=$((FAIL+1))
+  else
+    SVC_VER=$(kubectl exec -n "$NAMESPACE" deploy/order-service -- \
+      env 2>/dev/null | grep SERVICE_VERSION | cut -d= -f2 || echo "unknown")
+    green "BUG_ENABLED=true (confirmed via /health)  (service.version=$SVC_VER)"
+    PASS=$((PASS+1))
+  fi
 fi
 
 # ── 3. order-6 latency > 800 ms ──────────────────────
