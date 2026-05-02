@@ -30,12 +30,13 @@ jobs:
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
 
-      - name: Patch order-service — disable N+1 bug
+      - name: Patch order-service — disable N+1 bug + stamp fix version
         run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
           kubectl patch deployment order-service \
             -n grafana-demo \
             --type=strategic \
-            -p='{"spec":{"template":{"spec":{"containers":[{"name":"order-service","env":[{"name":"BUG_ENABLED","value":"false"}]}]}}}}'
+            -p="{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"order-service\",\"env\":[{\"name\":\"BUG_ENABLED\",\"value\":\"false\"},{\"name\":\"SERVICE_VERSION\",\"value\":\"${SHORT_SHA}-fix\"}]}]}}}}"
 
       - name: Wait for rollout
         run: kubectl rollout status deployment/order-service -n grafana-demo --timeout=120s
@@ -43,7 +44,7 @@ jobs:
       - name: Verify fix is live
         run: |
           POD=$(kubectl get pod -n grafana-demo -l app=order-service -o jsonpath='{.items[0].metadata.name}')
-          kubectl exec -n grafana-demo "$POD" -- env | grep BUG_ENABLED
+          kubectl exec -n grafana-demo "$POD" -- env | grep -E "BUG_ENABLED|SERVICE_VERSION"
 
       - name: Comment on PR
         uses: actions/github-script@v7
@@ -53,5 +54,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '✅ **Fix deployed to production** — `BUG_ENABLED=false` applied to `order-service` in `grafana-demo`. Latency should drop from ~400ms to ~90ms.'
+              body: '✅ **Fix deployed to production** — `BUG_ENABLED=false` applied to `order-service` in `grafana-demo`. Latency should drop from ~950ms to ~100ms. Check App Observability to compare `service.version` before/after.'
             })

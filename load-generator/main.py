@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://frontend-api:8080")
 TARGET_RPS = float(os.getenv("TARGET_RPS", "3"))
-ORDER_IDS = ["order-1", "order-2", "order-3", "order-4", "order-5", "order-6"]
+ORDER_IDS   = ["order-1", "order-2", "order-3", "order-4", "order-5", "order-6"]
+ORDER_WEIGHTS = [       1,        1,        1,        2,        1,        5]
+# order-6 (10 items, ~950ms buggy) gets 50% of traffic; order-4 (5 items) gets 20%
 
 INTERVAL = 1.0 / TARGET_RPS  # seconds between requests
 
@@ -27,7 +29,7 @@ async def run():
     async with httpx.AsyncClient(timeout=20.0) as client:
         while True:
             start = time.monotonic()
-            order_id = random.choice(ORDER_IDS)
+            order_id = random.choices(ORDER_IDS, weights=ORDER_WEIGHTS, k=1)[0]
             url = f"{FRONTEND_URL}/checkout/{order_id}"
             try:
                 r = await client.get(url)
