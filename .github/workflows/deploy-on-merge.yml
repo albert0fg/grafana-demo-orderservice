@@ -5,6 +5,8 @@ on:
     types: [closed]
     branches:
       - main
+    paths:
+      - 'k8s/order-service.yaml'
 
 permissions:
   contents: read
@@ -12,8 +14,8 @@ permissions:
 
 jobs:
   deploy-fix:
-    # Trigger on any merged PR from a fix/ branch — matches the branch Grafana Assistant creates
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'fix/')
+    # Fire on any merged PR that touches k8s/order-service.yaml with BUG_ENABLED=false
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     environment: production
 
@@ -21,16 +23,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Guard — only deploy if BUG_ENABLED is being set to false
+        id: guard
+        run: |
+          if grep -A1 'name: BUG_ENABLED' k8s/order-service.yaml | grep -q 'value: "false"'; then
+            echo "BUG_ENABLED=false confirmed in k8s/order-service.yaml — proceeding with deploy"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "k8s/order-service.yaml changed but BUG_ENABLED is not false — skipping deploy"
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up kubectl
+        if: steps.guard.outputs.should_deploy == 'true'
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
+        if: steps.guard.outputs.should_deploy == 'true'
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
 
       - name: Patch order-service — disable N+1 bug + stamp fix version
+        if: steps.guard.outputs.should_deploy == 'true'
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
           kubectl patch deployment order-service \
@@ -39,14 +55,17 @@ jobs:
             -p="{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"order-service\",\"env\":[{\"name\":\"BUG_ENABLED\",\"value\":\"false\"},{\"name\":\"SERVICE_VERSION\",\"value\":\"${SHORT_SHA}-fix\"}]}]}}}}"
 
       - name: Wait for rollout
+        if: steps.guard.outputs.should_deploy == 'true'
         run: kubectl rollout status deployment/order-service -n grafana-demo --timeout=120s
 
       - name: Verify fix is live
+        if: steps.guard.outputs.should_deploy == 'true'
         run: |
           POD=$(kubectl get pod -n grafana-demo -l app=order-service -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n grafana-demo "$POD" -- env | grep -E "BUG_ENABLED|SERVICE_VERSION"
 
       - name: Comment on PR
+        if: steps.guard.outputs.should_deploy == 'true'
         uses: actions/github-script@v7
         with:
           script: |

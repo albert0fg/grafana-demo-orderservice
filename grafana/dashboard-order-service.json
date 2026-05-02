@@ -1,0 +1,155 @@
+{
+  "title": "Order Service Demo — N+1 Bug",
+  "uid": "order-service-n-plus-one-demo",
+  "tags": ["demo", "order-service", "n+1"],
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "p99 Checkout Latency — by service.version (before vs after fix)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 300 },
+              { "color": "red", "value": 800 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, service_version) (rate(traces_spanmetrics_latency_bucket{service=\"order-service\", span_name=\"GET /orders/{order_id}\"}[2m]))) * 1000",
+          "legendFormat": "order-service p99 — {{service_version}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"frontend-api\", span_name=\"GET /checkout/{order_id}\"}[2m]))) * 1000",
+          "legendFormat": "frontend-api p99 (overall)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Current p99 Checkout Latency",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 300 },
+              { "color": "red", "value": 800 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"frontend-api\", span_name=\"GET /checkout/{order_id}\"}[2m]))) * 1000",
+          "legendFormat": "p99",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Alert threshold (300ms)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": { "mode": "fixed", "fixedColor": "orange" }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "expr": "vector(300)",
+          "legendFormat": "SLO threshold",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Requests per second — frontend-api /checkout",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_latency_count{service=\"frontend-api\", span_name=\"GET /checkout/{order_id}\"}[2m]))",
+          "legendFormat": "RPS",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Spans per second — inventory-service (N+1 indicator)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_latency_count{service=\"inventory-service\"}[2m]))",
+          "legendFormat": "inventory-service spans/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(traces_spanmetrics_latency_count{service=\"frontend-api\", span_name=\"GET /checkout/{order_id}\"}[2m]))",
+          "legendFormat": "frontend-api RPS (baseline)",
+          "refId": "B"
+        }
+      ]
+    }
+  ]
+}

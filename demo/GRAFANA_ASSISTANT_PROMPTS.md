@@ -51,14 +51,23 @@ Usa el MCP de GitHub para crear un PR en albert0fg/grafana-demo-orderservice que
 
 ## Prompt 5
 
-Compara la latencia p99 de order-service antes y después del fix usando service.version.
+Usando las span metrics de Prometheus, muestra la latencia p99 de order-service agrupada por service_version para comparar antes y después del fix.
 
-> **What happens:** Assistant queries span metrics grouped by `service_version`,
-> showing two series:
-> - `e856bee` (buggy): p99 ~1000ms
-> - `e856bee-fix` (fixed): p99 ~100ms
+> **What happens:** Assistant queries:
+> ```promql
+> histogram_quantile(0.99, sum by (le, service_version) (
+>   rate(traces_spanmetrics_latency_bucket{
+>     service="order-service",
+>     span_name="GET /orders/{order_id}"
+>   }[5m])
+> )) * 1000
+> ```
+> `service_version` is a confirmed label on these metrics. Two series appear:
+> - `<sha>` (buggy): p99 ~950ms
+> - `<sha>-fix` (fixed): p99 ~90ms
 >
-> 10x improvement visible as a step-change on the graph.
+> 10x improvement as a visible step-change. Also open the
+> **Order Service Demo** dashboard in Grafana for the full visual.
 
 ---
 

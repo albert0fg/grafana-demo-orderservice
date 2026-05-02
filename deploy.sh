@@ -55,6 +55,18 @@ case "${1:-}" in
     done
 
     echo ""
+    echo "Provisioning Grafana dashboard..."
+    GRAFANA_DIR="$(cd "$(dirname "$0")/grafana" && pwd)"
+    if command -v gcx &>/dev/null; then
+      gcx dashboards create -f "$GRAFANA_DIR/dashboard-order-service.json" \
+        --folder-name "Order Service Demo" --upsert 2>/dev/null && \
+        echo "Dashboard provisioned in folder 'Order Service Demo'." || \
+        echo "Warning: dashboard provisioning failed (gcx not configured?) — skipping."
+    else
+      echo "Warning: gcx not found — skipping dashboard provisioning."
+    fi
+
+    echo ""
     echo "All services running. N+1 bug is ENABLED (BUG_ENABLED=true)."
     echo "Run './deploy.sh --fix' to patch order-service and deploy the fix."
     ;;
