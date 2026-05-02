@@ -1,17 +1,17 @@
 # Grafana Assistant Demo Prompts
 
-These 5 prompts are designed to walk through the N+1 bug scenario using Grafana Assistant.
-Each prompt is a single short sentence (~10-15 words) in Spanish.
+5 prompts in Spanish, one sentence each. Use them in order after running
+`./demo-check.sh` and confirming the alert is Firing.
 
 ---
 
 ## Prompt 1
 
-El frontend-api está lento. Analiza la latencia p95 con Prometheus de los últimos 15 minutos.
+Hay una alerta crítica disparada en Grafana, analiza qué está pasando.
 
-> **What Grafana Assistant should do:** Query `http_server_duration_milliseconds` (or the OTEL-equivalent
-> histogram) filtered by `service_name="frontend-api"`, compute the p95, and show a time-series graph
-> highlighting that latency spikes above normal. This surfaces the symptom before root-cause analysis.
+> **What happens:** Assistant reads the firing alert context, queries
+> `traces_spanmetrics_latency_bucket` for `frontend-api`, and confirms p99
+> checkout latency is ~1s — well above the 300ms threshold.
 
 ---
 
@@ -19,37 +19,52 @@ El frontend-api está lento. Analiza la latencia p95 con Prometheus de los últi
 
 Muéstrame el service map de los últimos 10 minutos y dime qué servicio genera más spans.
 
-> **What Grafana Assistant should do:** Open the Tempo/Grafana service map, identify the call chain
-> frontend-api → order-service → inventory-service, and highlight that inventory-service has the
-> highest span count due to the N+1 bug producing one span per item per order.
+> **What happens:** Assistant opens the Tempo service map, identifies the chain
+> `frontend-api → order-service → inventory-service`, and flags that
+> `inventory-service` has ~10× more spans than expected for the traffic volume —
+> the N+1 signature.
 
 ---
 
 ## Prompt 3
 
-Busca trazas de order-service donde haya más de 3 llamadas a inventory-service en un solo request.
+Busca trazas de order-service donde haya más de 5 llamadas a inventory-service en un solo request.
 
-> **What Grafana Assistant should do:** Query Tempo for traces where `service.name="order-service"` and
-> count child spans to `inventory-service`. Surface an example trace that shows 3-5 sequential HTTP
-> calls to `/items/{id}` that should have been a single `/items/batch` call.
+> **What happens:** Assistant queries Tempo for traces where `order-service`
+> fans out into many child spans. It surfaces order-6 (10 items, ~1s total) and
+> shows the sequential waterfall — each `GET /items/{id}` blocks the next.
+> Points out `/items/batch` as the fix.
 
 ---
 
 ## Prompt 4
 
-Usa el MCP de GitHub para crear un PR en albert0fg/grafana-demo-orderservice que corrija el bug N+1 en order-service/main.py.
+Usa el MCP de GitHub para crear un PR en albert0fg/grafana-demo-orderservice que corrija el bug N+1 en order-service.
 
-> **What Grafana Assistant should do:** Use the GitHub MCP tool to open a pull request against
-> `albert0fg/grafana-demo-orderservice`. The PR should change `BUG_ENABLED` default to `"false"` in
-> `k8s/order-service.yaml` (or patch `order-service/main.py`) with a clear description linking
-> the observed traces to the fix.
+> **What happens:** Assistant uses GitHub MCP to create branch
+> `fix/order-service-n-plus-one`, commits `k8s/order-service.yaml` with
+> `BUG_ENABLED=false`, and opens a PR with a description linking the traces to
+> the fix. **Merge the PR** — `deploy-on-merge.yml` auto-deploys in ~30s and
+> stamps `SERVICE_VERSION=<sha>-fix`.
 
 ---
 
 ## Prompt 5
 
-Compara la latencia p95 de order-service antes y después del fix desplegado hace 5 minutos.
+Compara la latencia p99 de order-service antes y después del fix usando service.version.
 
-> **What Grafana Assistant should do:** Use `kubectl` or Prometheus to confirm when `BUG_ENABLED=false`
-> was rolled out, then compare the p95 latency histogram before and after that timestamp.
-> The graph should show a clear drop from ~N*RTT ms down to ~1*RTT ms per request.
+> **What happens:** Assistant queries span metrics grouped by `service_version`,
+> showing two series:
+> - `e856bee` (buggy): p99 ~1000ms
+> - `e856bee-fix` (fixed): p99 ~100ms
+>
+> 10x improvement visible as a step-change on the graph.
+
+---
+
+## After the Demo
+
+```bash
+./deploy.sh --reset   # re-enable bug for next run (~5 seconds)
+./demo-check.sh       # verify ready
+```

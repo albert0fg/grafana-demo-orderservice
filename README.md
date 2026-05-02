@@ -1,65 +1,99 @@
-# Grafana Cloud Demo — OrderService
+# Grafana Cloud Demo — Order Service N+1 Bug
 
-High-impact demo: Grafana Assistant investigates a production performance bug
-and generates a GitHub PR to fix it — end to end, inside Grafana Cloud.
+High-impact demo: Grafana Assistant receives a firing alert, investigates an
+N+1 query bug across 3 microservices, and opens a GitHub PR to fix it —
+entirely inside Grafana Cloud.
 
 ## The Scenario
 
-The `orderservice` has an N+1 query bug: each request for an order makes 8
-individual database calls instead of 1 batch query. This causes:
-- p95 latency of ~1.8s (SLA is 200ms)
-- Full observability signal across metrics, traces, and logs
+`order-service` has an N+1 bug: each checkout makes **N individual HTTP calls**
+to `inventory-service` (one per item) instead of a single batch call.
 
-Grafana Assistant identifies the root cause from the telemetry and opens a PR.
+| Order | Items | Buggy latency | Fixed latency |
+|-------|-------|--------------|---------------|
+| order-1 | 3 | ~270ms | ~90ms |
+| order-4 | 5 | ~480ms | ~90ms |
+| order-6 | 10 | ~1000ms | ~100ms |
+
+A Grafana alert fires when `frontend-api` p99 checkout latency > 300ms.
+Grafana Assistant diagnoses the root cause from traces and opens the fix PR.
 
 ## Quick Start
 
 ```bash
-# Deploy with bug enabled
+# 0. Pre-demo readiness check (pods, bug flag, latency, alert state)
+./demo-check.sh
+
+# 1. Deploy (first time)
 ./deploy.sh
 
-# After the demo — apply the fix
-./deploy.sh --fix
+# 2. After demo — reset for next run (5 seconds, no rebuild)
+./deploy.sh --reset
 
-# Teardown
+# 3. Teardown
 ./deploy.sh --teardown
 ```
 
 ## Demo Guide
 
-See [`demo/DEMO_SCRIPT.md`](demo/DEMO_SCRIPT.md) for the full step-by-step demo.  
+See [`demo/DEMO_SCRIPT.md`](demo/DEMO_SCRIPT.md) for the full step-by-step.  
 See [`demo/GRAFANA_ASSISTANT_PROMPTS.md`](demo/GRAFANA_ASSISTANT_PROMPTS.md) for copy-paste prompts.
 
 ## Architecture
 
 ```
-load-generator → orderservice → (simulated PostgreSQL with sleep())
-                      ↓
-              OTLP (gRPC :4317)
-                      ↓
-           Grafana Alloy Receiver
-                 ↙    ↓    ↘
-            Tempo  Loki  Prometheus
-                 ↘    ↓    ↙
-              Grafana Cloud
-              albertito.grafana.net
+load-generator (3 RPS, 50% to order-6)
+      │
+      ▼
+frontend-api  ──────────────────────────────┐
+      │                                     │
+      ▼                                     │
+order-service  ──(N calls, buggy)──▶  inventory-service
+                ──(1 batch, fixed)──▶  inventory-service
+
+Each service exports OTLP traces + metrics via gRPC → Alloy → Grafana Cloud
 ```
+
+## Services
+
+| Service | Role | Bug |
+|---------|------|-----|
+| `frontend-api` | Gateway, exposes `/checkout/{order_id}` | — |
+| `order-service` | Fetches order + items; `BUG_ENABLED` env var controls N+1 | ✓ |
+| `inventory-service` | Item catalog; has `/items/{id}` (slow) and `/items/batch` (fast) | — |
+| `load-generator` | Generates 3 RPS; 50% traffic to order-6 (10 items) | — |
 
 ## The Bug
 
 ```python
-# BUG: N+1 — 8 queries × 200ms = 1.6s
+# BUG (BUG_ENABLED=true): N calls × ~80ms = N×80ms
 for item_id in order["item_ids"]:
-    item = await db_query_single_item(item_id)   # 200ms each
+    r = await client.get(f"{INVENTORY_URL}/items/{item_id}")
 
-# FIX: 1 batch query × 200ms = 200ms
-items = await db_query_items_batch(order["item_ids"])
+# FIX (BUG_ENABLED=false): 1 call × ~80ms = ~80ms regardless of N
+r = await client.get(f"{INVENTORY_URL}/items/batch?ids={','.join(item_ids)}")
 ```
 
 ## Telemetry
 
 | Signal | What it shows |
 |--------|--------------|
-| Prometheus | p95 latency spike, DB query count by type |
-| Tempo | Waterfall of 8 sequential db.query spans per request |
-| Loki | "Fetching item 1 of 8" ... "Fetching item 8 of 8" log pattern |
+| Prometheus | p99 latency spike on `frontend-api`; alert fires after 1 min |
+| Tempo | Waterfall of N sequential `GET /items/{id}` spans per request |
+| App Observability | Service map: frontend-api → order-service → inventory-service |
+| `service.version` | Short git SHA (`e856bee`) before fix; `e856bee-fix` after |
+
+## Alert
+
+Rule: **frontend-api checkout latency alta** (folder: Order Service Demo)  
+Condition: p99 of `GET /checkout/{order_id}` > 300ms for 1 minute  
+Notification: `alberto@grafana.com`
+
+## Resetting After a Demo Run
+
+The `deploy-on-merge.yml` workflow auto-deploys the fix when the PR is merged.
+To run the demo again:
+
+```bash
+./deploy.sh --reset   # patches BUG_ENABLED=true back, ~5 seconds
+```
