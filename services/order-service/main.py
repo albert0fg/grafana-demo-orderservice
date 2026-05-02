@@ -22,6 +22,7 @@ ORDERS = {
     "order-3": {"id": "order-3", "customer": "Charlie", "item_ids": ["item-1", "item-3", "item-4", "item-5"]},
     "order-4": {"id": "order-4", "customer": "Diana",   "item_ids": ["item-1", "item-2", "item-3", "item-4", "item-5"]},
     "order-5": {"id": "order-5", "customer": "Eve",     "item_ids": ["item-3", "item-5"]},
+    "order-6": {"id": "order-6", "customer": "Frank",   "item_ids": ["item-1", "item-2", "item-3", "item-4", "item-5", "item-6", "item-7", "item-8", "item-9", "item-10"]},
 }
 
 

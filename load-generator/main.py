@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://frontend-api:8080")
 TARGET_RPS = float(os.getenv("TARGET_RPS", "3"))
-ORDER_IDS = ["order-1", "order-2", "order-3", "order-4", "order-5"]
+ORDER_IDS = ["order-1", "order-2", "order-3", "order-4", "order-5", "order-6"]
 
 INTERVAL = 1.0 / TARGET_RPS  # seconds between requests
 

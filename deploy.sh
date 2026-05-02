@@ -23,6 +23,16 @@ case "${1:-}" in
     echo "N+1 bug is now FIXED."
     ;;
 
+  --reset)
+    echo "Resetting demo: re-enabling N+1 bug (BUG_ENABLED=true)..."
+    kubectl patch deployment order-service \
+      -n "$NAMESPACE" \
+      --type=strategic \
+      -p='{"spec":{"template":{"spec":{"containers":[{"name":"order-service","env":[{"name":"BUG_ENABLED","value":"true"}]}]}}}}'
+    kubectl rollout status deployment/order-service -n "$NAMESPACE"
+    echo "Done. N+1 bug is ENABLED again — ready for next demo run."
+    ;;
+
   --teardown)
     echo "Deleting namespace $NAMESPACE..."
     kubectl delete namespace "$NAMESPACE" --ignore-not-found
