@@ -29,7 +29,7 @@ spec:
             - name: INVENTORY_SERVICE_URL
               value: "http://inventory-service:8080"
             - name: BUG_ENABLED
-              value: "false"
+              value: "false"   # N+1 fix: use batch call to inventory-service
             - name: K8S_POD_IP
               valueFrom:
                 fieldRef:
