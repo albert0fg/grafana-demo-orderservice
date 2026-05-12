@@ -92,8 +92,9 @@ case "${1:-}" in
     fi
 
     echo ""
-    echo "All services running. N+1 bug is ENABLED (BUG_ENABLED=true)."
-    echo "Run './deploy.sh --fix' to patch order-service and deploy the fix."
+    echo "All services running. N+1 bug is DISABLED (BUG_ENABLED=false)."
+    echo "order-service uses a single batch call to inventory-service — healthy by default."
+    echo "Run './deploy.sh --reset' to re-enable the N+1 bug for demo purposes."
     ;;
 
   *)
