@@ -1,18 +1,43 @@
 #!/usr/bin/env bash
 # deploy.sh — Grafana Cloud demo deployment helper
 #
+# Reads configuration from ./.env (see .env.example). Templated k8s manifests
+# are rendered with envsubst before being applied.
+#
 # Usage:
-#   ./deploy.sh             Deploy everything with BUG_ENABLED=true
-#   ./deploy.sh --fix       Patch order-service to BUG_ENABLED=false (deploy the fix)
-#   ./deploy.sh --reset     Re-enable N+1 bug for next demo run
+#   ./deploy.sh             Deploy everything (BUG_ENABLED comes from k8s/order-service.yaml)
+#   ./deploy.sh --reset     Restore main to BUG_ENABLED=true via PR, then sync cluster.
+#                           Idempotent — if main is already in that state, only syncs.
 #   ./deploy.sh --teardown  Delete the grafana-demo namespace
 
 set -euo pipefail
 
 NAMESPACE="grafana-demo"
-K8S_DIR="$(cd "$(dirname "$0")/k8s" && pwd)"
-GRAFANA_DIR="$(cd "$(dirname "$0")/grafana" && pwd)"
-DASHBOARD_UID="order-service-n-plus-one-demo"
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+K8S_DIR="$REPO_ROOT/k8s"
+GRAFANA_DIR="$REPO_ROOT/grafana"
+
+# ── Load .env ────────────────────────────────────────
+if [ ! -f "$REPO_ROOT/.env" ]; then
+  echo "ERROR: $REPO_ROOT/.env not found. Copy .env.example to .env and fill it in." >&2
+  exit 1
+fi
+# shellcheck disable=SC1091
+set -a; . "$REPO_ROOT/.env"; set +a
+
+: "${GITHUB_OWNER:?GITHUB_OWNER not set in .env}"
+: "${GITHUB_REPO:?GITHUB_REPO not set in .env}"
+: "${GHCR_IMAGE_PREFIX:?GHCR_IMAGE_PREFIX not set in .env}"
+: "${GRAFANA_HOST:?GRAFANA_HOST not set in .env}"
+: "${DASHBOARD_UID:?DASHBOARD_UID not set in .env}"
+
+command -v envsubst >/dev/null || { echo "ERROR: envsubst not found (install gettext)" >&2; exit 1; }
+
+# Render a manifest with env vars and apply it
+apply_template() {
+  local f="$1"
+  envsubst '${GHCR_IMAGE_PREFIX}' < "$f" | kubectl apply -f -
+}
 
 # Post a Grafana annotation to the demo dashboard (requires gcx; silent on failure)
 post_annotation() {
@@ -35,28 +60,88 @@ YAML
   rm -f "$f"
 }
 
-case "${1:-}" in
-  --fix)
-    echo "Patching order-service: setting BUG_ENABLED=false..."
-    kubectl patch deployment order-service \
-      -n "$NAMESPACE" \
-      --type=strategic \
-      -p='{"spec":{"template":{"spec":{"containers":[{"name":"order-service","env":[{"name":"BUG_ENABLED","value":"false"}]}]}}}}'
-    echo "Done. Waiting for rollout..."
-    kubectl rollout status deployment/order-service -n "$NAMESPACE"
-    echo "N+1 bug is now FIXED."
-    post_annotation "Fix deployed manually — BUG_ENABLED=false" "demo, fix"
-    ;;
+# Returns 0 if k8s/order-service.yaml in current working tree has BUG_ENABLED=true
+manifest_has_bug_true() {
+  grep -A1 'name: BUG_ENABLED' "$K8S_DIR/order-service.yaml" | grep -q 'value: "true"'
+}
 
+# Open a PR that flips BUG_ENABLED back to true, auto-merge it with admin rights.
+# No-op if main already has BUG_ENABLED=true.
+restore_bug_in_repo_via_pr() {
+  cd "$REPO_ROOT"
+
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "ERROR: working tree has uncommitted changes to tracked files — commit or stash before --reset" >&2
+    git status --short >&2
+    exit 1
+  fi
+
+  git fetch origin main --quiet
+  git checkout main --quiet
+  git pull --ff-only origin main --quiet
+
+  if manifest_has_bug_true; then
+    echo "main already has BUG_ENABLED=true — no restore PR needed."
+    return 0
+  fi
+
+  local branch="restore/re-enable-bug-$(date +%s)"
+  echo "main has BUG_ENABLED=false — opening restore PR on branch $branch..."
+  git checkout -b "$branch" --quiet
+
+  python3 - <<'PY'
+import re, pathlib
+p = pathlib.Path("k8s/order-service.yaml")
+content = p.read_text()
+new = re.sub(
+    r'(name: BUG_ENABLED\s*\n\s+value: ")false(")',
+    r'\1true\2',
+    content,
+)
+if new == content:
+    raise SystemExit("No BUG_ENABLED=false block found to flip")
+p.write_text(new)
+PY
+
+  git add k8s/order-service.yaml
+  git commit -m "restore: re-enable BUG_ENABLED=true for next demo run" --quiet
+  git push -u origin "$branch" --quiet
+
+  local pr_url
+  pr_url=$(gh pr create \
+    --title "restore: re-enable BUG_ENABLED=true for next demo run" \
+    --body "Automated reset between demos. Restores the initial state so the AI Assistant has something to fix on the next run." \
+    --head "$branch" \
+    --base main)
+  echo "Opened $pr_url"
+
+  local pr_num
+  pr_num=$(echo "$pr_url" | grep -oE '[0-9]+$')
+
+  echo "Auto-merging PR #$pr_num with admin..."
+  gh pr merge "$pr_num" --admin --squash --delete-branch
+
+  git checkout main --quiet
+  git pull --ff-only origin main --quiet
+  echo "main restored: $(git rev-parse --short HEAD)"
+}
+
+sync_cluster_to_manifest() {
+  cd "$REPO_ROOT"
+  echo "Syncing cluster with k8s/order-service.yaml..."
+  apply_template "$K8S_DIR/order-service.yaml"
+  kubectl set env deployment/order-service -n "$NAMESPACE" SERVICE_VERSION="$(git rev-parse --short HEAD)"
+  kubectl rollout restart deployment/order-service -n "$NAMESPACE"
+  kubectl rollout status deployment/order-service -n "$NAMESPACE" --timeout=180s
+}
+
+case "${1:-}" in
   --reset)
-    echo "Resetting demo: re-enabling N+1 bug (BUG_ENABLED=true)..."
-    SHORT_SHA="$(git -C "$(dirname "$0")" rev-parse --short HEAD)"
-    kubectl patch deployment order-service \
-      -n "$NAMESPACE" \
-      --type=strategic \
-      -p="{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"order-service\",\"env\":[{\"name\":\"BUG_ENABLED\",\"value\":\"true\"},{\"name\":\"SERVICE_VERSION\",\"value\":\"${SHORT_SHA}\"}]}]}}}}"
-    kubectl rollout status deployment/order-service -n "$NAMESPACE"
-    echo "Done. BUG_ENABLED=true, SERVICE_VERSION=${SHORT_SHA} — ready for next demo run."
+    echo "Resetting demo — restoring BUG_ENABLED=true in repo if needed, then syncing cluster..."
+    restore_bug_in_repo_via_pr
+    sync_cluster_to_manifest
+    SHORT_SHA=$(git rev-parse --short HEAD)
+    echo "Done. service.version=$SHORT_SHA"
     post_annotation "Demo reset — BUG_ENABLED=true, version=${SHORT_SHA}" "demo, reset"
     ;;
 
@@ -69,10 +154,10 @@ case "${1:-}" in
   "")
     echo "Deploying Grafana demo to namespace: $NAMESPACE"
     kubectl apply -f "$K8S_DIR/namespace.yaml"
-    kubectl apply -f "$K8S_DIR/inventory-service.yaml"
-    kubectl apply -f "$K8S_DIR/order-service.yaml"
-    kubectl apply -f "$K8S_DIR/frontend-api.yaml"
-    kubectl apply -f "$K8S_DIR/load-generator.yaml"
+    apply_template "$K8S_DIR/inventory-service.yaml"
+    apply_template "$K8S_DIR/order-service.yaml"
+    apply_template "$K8S_DIR/frontend-api.yaml"
+    apply_template "$K8S_DIR/load-generator.yaml"
 
     echo ""
     echo "Waiting for deployments to be ready..."
@@ -83,23 +168,25 @@ case "${1:-}" in
     echo ""
     echo "Provisioning Grafana dashboard..."
     if command -v gcx &>/dev/null; then
-      gcx dashboards create -f "$GRAFANA_DIR/dashboard-order-service.json" \
+      rendered=$(mktemp /tmp/dashboard-XXXXXX.json)
+      envsubst '${DASHBOARD_UID}' < "$GRAFANA_DIR/dashboard-order-service.json" > "$rendered"
+      gcx dashboards create -f "$rendered" \
         --folder-name "Order Service Demo" --upsert 2>/dev/null && \
-        echo "Dashboard provisioned in folder 'Order Service Demo'." || \
+        echo "Dashboard provisioned in folder 'Order Service Demo' (uid=${DASHBOARD_UID})." || \
         echo "Warning: dashboard provisioning failed (gcx not configured?) — skipping."
+      rm -f "$rendered"
     else
       echo "Warning: gcx not found — skipping dashboard provisioning."
     fi
 
     echo ""
-    echo "All services running. N+1 bug is DISABLED (BUG_ENABLED=false)."
-    echo "order-service uses a single batch call to inventory-service — healthy by default."
-    echo "Run './deploy.sh --reset' to re-enable the N+1 bug for demo purposes."
+    echo "All services running. BUG_ENABLED matches k8s/order-service.yaml in main."
+    echo "Run './deploy.sh --reset' between demos to restore the bug state."
     ;;
 
   *)
     echo "Unknown argument: ${1}"
-    echo "Usage: $0 [--fix|--reset|--teardown]"
+    echo "Usage: $0 [--reset|--teardown]"
     exit 1
     ;;
 esac
